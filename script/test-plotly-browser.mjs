@@ -1,0 +1,1132 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { build } from "esbuild";
+import { chromium } from "playwright";
+
+const assets = new Map();
+for (const [name, entry] of [
+  ["PlotlyTest", "src/plotly.ts"],
+  ["DefaultsTest", "src/parse-config/defaults.ts"],
+  ["CardTest", "src/plotly-graph-card.ts"],
+]) {
+  const result = await build({
+    entryPoints: [entry],
+    bundle: true,
+    write: false,
+    format: "iife",
+    globalName: name,
+    outdir: "dist",
+    minify: true,
+  });
+  assets.set(
+    `/${name}.js`,
+    result.outputFiles.find((file) => file.path.endsWith(".js")).text,
+  );
+  const stylesheet = result.outputFiles.find((file) =>
+    file.path.endsWith(".css"),
+  );
+  if (stylesheet) assets.set(`/${name}.css`, stylesheet.text);
+}
+const server = createServer((request, response) => {
+  response.setHeader(
+    "Content-Type",
+    request.url.endsWith(".js")
+      ? "text/javascript"
+      : request.url.endsWith(".css")
+        ? "text/css"
+        : "text/html",
+  );
+  response.end(
+    assets.get(request.url) ||
+      `<!doctype html><link rel="stylesheet" href="/PlotlyTest.css"><body>
+    <script src="/PlotlyTest.js"></script><script src="/DefaultsTest.js"></script>
+    <script src="/CardTest.js"></script></body>`,
+  );
+});
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+let browser;
+try {
+  browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader"] });
+  const page = await browser.newPage({
+    viewport: { width: 1000, height: 800 },
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") console.error(message.text());
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  const results = await page.evaluate(async () => {
+    const Plotly = PlotlyTest.default;
+    const results = [];
+    const check = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const xy = { x: [1, 2, 3], y: [2, 1, 3] };
+    const xyz = { ...xy, z: [1, 3, 2] };
+    const hierarchy = {
+      labels: ["A", "B", "C"],
+      parents: ["", "A", "A"],
+      values: [3, 1, 2],
+    };
+    const field = {
+      x: [0, 1, 0, 1, 0, 1, 0, 1],
+      y: [0, 0, 1, 1, 0, 0, 1, 1],
+      z: [0, 0, 0, 0, 1, 1, 1, 1],
+    };
+    const carpet = {
+      type: "carpet",
+      a: [0, 1, 2],
+      b: [0, 1, 2],
+      y: [
+        [0, 1, 2],
+        [1, 2, 3],
+        [2, 3, 4],
+      ],
+    };
+    const modernTypes = [
+      "scattergl",
+      "splom",
+      "parcoords",
+      "scatterpolargl",
+      "scattersmith",
+    ];
+    const fixtures = {
+      scatter: xy,
+      scattergl: { ...xy, mode: "lines+markers" },
+      splom: {
+        dimensions: [
+          { label: "Temperature", values: [18, 21, 24] },
+          { label: "Humidity", values: [45, 52, 48] },
+        ],
+      },
+      parcoords: {
+        line: { color: [1, 2, 3] },
+        dimensions: [
+          { label: "Power", values: [1, 3, 2] },
+          { label: "Voltage", values: [220, 230, 225] },
+        ],
+      },
+      scatterpolargl: {
+        mode: "lines+markers",
+        r: [1, 2, 1.5],
+        theta: [0, 120, 240],
+      },
+      scattersmith: {
+        mode: "lines+markers",
+        real: [0.5, 1, 2],
+        imag: [-0.5, 0, 0.5],
+      },
+      bar: xy,
+      box: xy,
+      violin: xy,
+      histogram: { x: [1, 1, 2, 3] },
+      histogram2d: xy,
+      histogram2dcontour: xy,
+      heatmap: {
+        z: [
+          [1, 2],
+          [3, 4],
+        ],
+      },
+      contour: {
+        z: [
+          [1, 2],
+          [3, 4],
+        ],
+      },
+      scatterternary: { a: [0.2, 0.4], b: [0.3, 0.3], c: [0.5, 0.3] },
+      funnel: { x: [3, 2, 1], y: ["A", "B", "C"] },
+      waterfall: xy,
+      pie: { labels: ["A", "B"], values: [1, 2] },
+      sunburst: hierarchy,
+      treemap: hierarchy,
+      icicle: hierarchy,
+      funnelarea: { labels: ["A", "B"], values: [3, 2] },
+      scatter3d: xyz,
+      surface: {
+        z: [
+          [1, 2],
+          [3, 4],
+        ],
+      },
+      isosurface: { ...field, value: [0, 1, 2, 3, 1, 2, 3, 4] },
+      volume: { ...field, value: [0, 1, 2, 3, 1, 2, 3, 4] },
+      mesh3d: { ...xyz, i: [0], j: [1], k: [2] },
+      cone: { ...xyz, u: [1, 1, 1], v: [1, 1, 1], w: [1, 1, 1] },
+      streamtube: {
+        ...field,
+        u: Array(8).fill(1),
+        v: Array(8).fill(1),
+        w: Array(8).fill(1),
+        starts: { x: [0], y: [0], z: [0] },
+      },
+      parcats: {
+        dimensions: [
+          { label: "A", values: ["a", "b"] },
+          { label: "B", values: ["c", "d"] },
+        ],
+      },
+      sankey: {
+        node: { label: ["A", "B"] },
+        link: { source: [0], target: [1], value: [2] },
+      },
+      indicator: { value: 42, mode: "number" },
+      table: {
+        cells: {
+          values: [
+            [1, 2],
+            [3, 4],
+          ],
+        },
+      },
+      carpet,
+      scattercarpet: { a: [0, 1, 2], b: [0, 1, 2] },
+      contourcarpet: {
+        a: [0, 1, 2],
+        b: [0, 1, 2],
+        z: [
+          [1, 2, 3],
+          [2, 3, 4],
+          [3, 4, 5],
+        ],
+      },
+      ohlc: {
+        x: [1, 2],
+        open: [2, 3],
+        high: [4, 5],
+        low: [1, 2],
+        close: [3, 4],
+      },
+      candlestick: {
+        x: [1, 2],
+        open: [2, 3],
+        high: [4, 5],
+        low: [1, 2],
+        close: [3, 4],
+      },
+      scatterpolar: { r: [1, 2, 3], theta: [0, 120, 240] },
+      barpolar: { r: [1, 2, 3], theta: [0, 120, 240] },
+      scattergeo: { lon: [7, 8], lat: [46, 47] },
+      choropleth: {
+        locations: ["test"],
+        z: [1],
+        geojson: {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              id: "test",
+              properties: {},
+              geometry: {
+                type: "Polygon",
+                coordinates: [
+                  [
+                    [7, 46],
+                    [8, 46],
+                    [8, 47],
+                    [7, 46],
+                  ],
+                ],
+              },
+            },
+          ],
+        },
+      },
+    };
+    window.modernTraceCases = modernTypes.map((type) => ({
+      type,
+      data: fixtures[type],
+    }));
+    for (const [type, data] of Object.entries(fixtures)) {
+      const div = document.createElement("div");
+      document.body.append(div);
+      const traces = ["scattercarpet", "contourcarpet"].includes(type)
+        ? [carpet, { ...data, type }]
+        : [{ ...data, type }];
+      const layout = {
+        width: 480,
+        height: 285,
+        geo: {
+          showcoastlines: false,
+          showland: false,
+          showcountries: false,
+          showlakes: false,
+          showocean: false,
+          showrivers: false,
+          showframe: false,
+          fitbounds: false,
+          lataxis: { range: [45, 48] },
+          lonaxis: { range: [6, 9] },
+        },
+      };
+      try {
+        if (modernTypes.includes(type)) {
+          const validation =
+            Plotly.validate(traces, {
+              width: layout.width,
+              height: layout.height,
+            }) || [];
+          check(!validation.length, `${type}: ${JSON.stringify(validation)}`);
+        }
+        await Plotly.newPlot(div, traces, layout, { showSendToCloud: false });
+        check(
+          div._fullData.at(-1).type === type,
+          `${type}: silently fell back to another trace`,
+        );
+        check(
+          div._fullData.at(-1).visible !== false,
+          `${type}: invisible trace`,
+        );
+        check(div.querySelector("svg"), `${type}: no rendered SVG`);
+        if (modernTypes.includes(type) && type !== "scattersmith") {
+          check(div.querySelector("canvas"), `${type}: no rendered canvas`);
+        }
+        await Plotly.react(
+          div,
+          traces,
+          { ...layout, width: 360 },
+          { showSendToCloud: false },
+        );
+        check(div._fullLayout.width === 360, `${type}: resize/react failed`);
+        results.push(type);
+      } finally {
+        Plotly.purge(div);
+        div.remove();
+      }
+    }
+    const div = document.createElement("div");
+    document.body.append(div);
+    const defaults = DefaultsTest.addPostParsingDefaults({
+      entities: [],
+      visible_range: [0, 4],
+      raw_plotly_config: false,
+      config: {},
+      layout: {
+        width: 480,
+        height: 285,
+        yaxis2: { overlaying: "y", side: "right" },
+        shapes: [
+          {
+            type: "path",
+            path: "M 0,0 L 0,2 Q 1,3 2,2 L 2,0 Z",
+            fillcolor: "rgba(52,152,219,0.82)",
+          },
+        ],
+        annotations: [{ x: 1, y: 1, text: "<b>900 L</b>", showarrow: false }],
+      },
+    });
+    await Plotly.newPlot(
+      div,
+      [
+        { ...xy, type: "scatter" },
+        { ...xy, type: "bar", yaxis: "y2" },
+      ],
+      defaults.layout,
+      defaults.config,
+    );
+    check(
+      div._fullLayout.yaxis2.tickmode === "sync",
+      "Overlaid axis did not use Plotly's synchronized-tick default",
+    );
+    check(
+      div._context.showSendToCloud === false,
+      "Cloud upload unexpectedly enabled",
+    );
+    check(
+      !div.querySelector('[data-title*="Cloud"]'),
+      "Cloud upload button visible",
+    );
+    check(div.querySelector(".shapelayer path"), "Tank shape missing");
+    check(
+      div.querySelector(".annotation-text").textContent === "900 L",
+      "Tank label missing",
+    );
+    await Plotly.relayout(div, { "yaxis.autorange": true });
+    check(div._fullLayout.yaxis.autorange, "Dotted relayout failed");
+    const axisCases = [
+      { name: "single axis", single: true, axis: {}, mode: "auto" },
+      { name: "non-overlaid axis", axis: { overlaying: false }, mode: "auto" },
+      {
+        name: "raw overlaid axis",
+        raw: true,
+        axis: { overlaying: "y" },
+        mode: "sync",
+      },
+      {
+        name: "explicit independent ticks",
+        axis: { overlaying: "y", tickmode: "auto" },
+        mode: "auto",
+      },
+      {
+        name: "inferred array ticks",
+        axis: { overlaying: "y", tickvals: [1, 2, 3] },
+        mode: "array",
+      },
+      {
+        name: "inferred linear ticks",
+        axis: { overlaying: "y", dtick: 1 },
+        mode: "linear",
+      },
+      {
+        name: "categorical overlaid axis",
+        axis: { overlaying: "y", type: "category" },
+        mode: "auto",
+      },
+    ];
+    for (const test of axisCases) {
+      const input = DefaultsTest.addPostParsingDefaults({
+        entities: [],
+        visible_range: [0, 4],
+        raw_plotly_config: !!test.raw,
+        config: {},
+        layout: { width: 480, height: 285, yaxis2: test.axis },
+      });
+      const traces = [{ ...xy, type: "scatter" }];
+      if (!test.single) traces.push({ ...xy, type: "scatter", yaxis: "y2" });
+      await Plotly.react(div, traces, input.layout, input.config);
+      const axis = div._fullLayout[test.single ? "yaxis" : "yaxis2"];
+      check(
+        axis.tickmode === test.mode,
+        `${test.name}: expected ${test.mode}, got ${axis.tickmode}`,
+      );
+      results.push(test.name);
+    }
+    for (const test of [
+      {
+        name: "both editor bounds",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        expected: [300, 1500],
+        autorange: false,
+      },
+      {
+        name: "editor minimum only",
+        min_y_axis: 300,
+        expected: [300, null],
+        autorange: "max",
+      },
+      {
+        name: "editor maximum only",
+        max_y_axis: 1500,
+        expected: [null, 1500],
+        autorange: "min",
+      },
+      {
+        name: "zero editor minimum",
+        min_y_axis: 0,
+        expected: [0, null],
+        autorange: "max",
+      },
+      {
+        name: "zero editor maximum",
+        max_y_axis: 0,
+        expected: [null, 0],
+        autorange: "min",
+        values: [-600, -1000],
+      },
+      {
+        name: "explicit range overrides editor",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        axis: { range: [400, 1200] },
+        expected: [400, 1200],
+        autorange: false,
+      },
+      {
+        name: "explicit autorange overrides editor",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        axis: { autorange: true },
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "logarithmic editor bounds use data units",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        axis: { type: "log" },
+        expected: [Math.log10(300), Math.log10(1500)],
+        autorange: false,
+      },
+      {
+        name: "editor logarithmic scale toggle",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        logarithmic_scale: true,
+        expected: [Math.log10(300), Math.log10(1500)],
+        autorange: false,
+      },
+      {
+        name: "invalid logarithmic minimum is ignored",
+        min_y_axis: 0,
+        max_y_axis: 1500,
+        logarithmic_scale: true,
+        expected: [null, Math.log10(1500)],
+        autorange: "min",
+      },
+      {
+        name: "inverted editor bounds are ignored",
+        min_y_axis: 1500,
+        max_y_axis: 300,
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "editor minimum above all data stays ascending",
+        min_y_axis: 2000,
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "editor maximum below all data stays ascending",
+        max_y_axis: 300,
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "logarithmic minimum above all data stays ascending",
+        min_y_axis: 2000,
+        logarithmic_scale: true,
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "fit data includes editor bounds and data outside them",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        fit_y_data: true,
+        values: [100, 2000],
+        includes: [100, 300, 1500, 2000],
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "logarithmic fit includes bounds in data units",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        fit_y_data: true,
+        logarithmic_scale: true,
+        includes: [300, 1500],
+        expected: [null, null],
+        autorange: false,
+      },
+      {
+        name: "logarithmic fit supports bounds below one",
+        min_y_axis: 0.01,
+        max_y_axis: 2,
+        fit_y_data: true,
+        logarithmic_scale: true,
+        values: [0.2, 0.7],
+        includes: [0.01, 0.2, 0.7, 2],
+        expected: [null, null],
+        autorange: false,
+      },
+      {
+        name: "logarithmic fit never clips data outside the bounds",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        fit_y_data: true,
+        logarithmic_scale: true,
+        values: [100, 2000],
+        includes: [100, 300, 1500, 2000],
+        expected: [null, null],
+        autorange: true,
+      },
+      {
+        name: "explicit Plotly type overrides editor logarithmic toggle",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        logarithmic_scale: true,
+        axis: { type: "linear" },
+        expected: [300, 1500],
+        autorange: false,
+      },
+      {
+        name: "explicit range overrides fit data",
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        fit_y_data: true,
+        axis: { range: [400, 1200] },
+        expected: [400, 1200],
+        autorange: false,
+      },
+    ]) {
+      const input = DefaultsTest.addPostParsingDefaults({
+        entities: [],
+        visible_range: [0, 4],
+        raw_plotly_config: false,
+        min_y_axis: test.min_y_axis,
+        max_y_axis: test.max_y_axis,
+        fit_y_data: test.fit_y_data,
+        logarithmic_scale: test.logarithmic_scale,
+        config: {},
+        layout: { width: 480, height: 285, yaxis: test.axis || {} },
+      });
+      await Plotly.react(
+        div,
+        [{ type: "scatter", x: [1, 2], y: test.values || [600, 1000] }],
+        input.layout,
+        input.config,
+      );
+      const editorUpdate = DefaultsTest.getEditorYAxisRelayout(
+        input,
+        div.layout.yaxis.range,
+      );
+      if (editorUpdate) await Plotly.relayout(div, editorUpdate);
+      const axis = div._fullLayout.yaxis;
+      check(axis.autorange === test.autorange, `${test.name}: wrong autorange`);
+      check(axis.range[0] < axis.range[1], `${test.name}: reversed range`);
+      test.expected.forEach((bound, index) => {
+        if (bound !== null)
+          check(
+            axis.range[index] === bound,
+            `${test.name}: wrong bound ${index}`,
+          );
+      });
+      for (const value of test.includes || []) {
+        const coordinate = axis.type === "log" ? Math.log10(value) : value;
+        check(
+          axis.range[0] <= coordinate + 1e-10 &&
+            axis.range[1] >= coordinate - 1e-10,
+          `${test.name}: ${value} is outside ${JSON.stringify(axis.range)} (update ${JSON.stringify(editorUpdate)})`,
+        );
+      }
+      results.push(test.name);
+    }
+    for (const test of [
+      {
+        name: "disabled log toggle keeps numeric auto-detection",
+        values: [10, 100],
+        type: "linear",
+      },
+      {
+        name: "disabled log toggle keeps category auto-detection",
+        values: ["off", "on"],
+        type: "category",
+      },
+      {
+        name: "disabled log toggle keeps date auto-detection",
+        values: ["2026-10-01", "2026-10-02"],
+        type: "date",
+      },
+    ]) {
+      const traces = [{ type: "scatter", x: [1, 2], y: test.values }];
+      const logarithmic = DefaultsTest.addPostParsingDefaults({
+        entities: [],
+        visible_range: [0, 4],
+        raw_plotly_config: false,
+        logarithmic_scale: true,
+        config: {},
+        layout: { width: 480, height: 285 },
+      });
+      await Plotly.react(
+        div,
+        [{ type: "scatter", x: [1, 2], y: [10, 100] }],
+        logarithmic.layout,
+        logarithmic.config,
+      );
+      const automatic = DefaultsTest.addPostParsingDefaults({
+        entities: [],
+        visible_range: [0, 4],
+        raw_plotly_config: false,
+        logarithmic_scale: false,
+        config: {},
+        layout: { width: 480, height: 285 },
+      });
+      await Plotly.react(div, traces, automatic.layout, automatic.config);
+      check(
+        div._fullLayout.yaxis.type === test.type,
+        `${test.name}: got ${div._fullLayout.yaxis.type}`,
+      );
+      results.push(test.name);
+    }
+    Plotly.purge(div);
+    div.remove();
+    results.push("axes, privacy, tank shapes, annotations, relayout");
+    return { version: Plotly.version, results };
+  });
+  const source = await readFile("src/plotly.ts", "utf8");
+  const expected = [
+    ...source.matchAll(/^\s*require\("plotly\.js\/lib\/([^/".]+)"\)/gm),
+  ]
+    .map((match) => match[1])
+    .filter((name) => name !== "calendars");
+  for (const type of ["scatter", ...expected])
+    assert(results.results.includes(type), `Missing browser fixture: ${type}`);
+  assert.equal(results.version, "4.1.1");
+  await page.evaluate(() => {
+    customElements.define(
+      "ha-card",
+      class extends HTMLElement {
+        connectedCallback() {
+          this.style.display = "block";
+        }
+      },
+    );
+    const card = new CardTest.PlotlyGraph();
+    card.id = "card-under-test";
+    card.style.cssText =
+      "display:block;width:480px;--card-background-color:white;--primary-background-color:white;--primary-color:blue;--primary-text-color:black;--secondary-text-color:gray";
+    card.hass = {
+      states: {},
+      locale: { language: "en", first_weekday: "monday" },
+      config: { time_zone: "Europe/Zurich" },
+      themes: { darkMode: false },
+    };
+    card.setConfig({
+      type: "custom:plotly-graph",
+      refresh_interval: 0,
+      hours_to_show: "24h",
+      config: { displayModeBar: true },
+      entities: [
+        {
+          entity: "",
+          x: [Date.now() - 3600000, Date.now()],
+          y: [10, 20],
+          name: "Test power",
+          unit_of_measurement: "W",
+        },
+      ],
+    });
+    document.body.append(card);
+  });
+  await page.waitForFunction(() => {
+    const card = document.getElementById("card-under-test");
+    return (
+      card.contentEl?._fullData?.length === 1 &&
+      card.contentEl.style.visibility === ""
+    );
+  });
+  const cardState = await page.evaluate(() => {
+    const card = document.getElementById("card-under-test");
+    return {
+      error: card.errorMsgEl.textContent,
+      title: card.contentEl._fullLayout.yaxis.title.text,
+      upload: card.contentEl._context.showSendToCloud,
+      height: card.contentEl._fullLayout.height,
+    };
+  });
+  assert.equal(cardState.error, "");
+  assert.equal(cardState.title, "W");
+  assert.equal(cardState.upload, false);
+  assert.equal(cardState.height, 285);
+  await page.evaluate(() => {
+    document.getElementById("card-under-test").style.width = "320px";
+  });
+  await page.waitForFunction(() => {
+    const card = document.getElementById("card-under-test");
+    return card.contentEl._fullLayout.width <= 320;
+  });
+  results.results.push("Lovelace card with mock HA state");
+  const editorCardCases = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    const cases = [
+      {
+        name: "card logarithmic editor toggle",
+        logarithmic_scale: true,
+        expected: [Math.log10(300), Math.log10(1500)],
+      },
+      {
+        name: "card logarithmic fit",
+        logarithmic_scale: true,
+        fit_y_data: true,
+        includes: [300, 600, 1000, 1500],
+      },
+      {
+        name: "card scroll autorange overrides fixed editor bounds",
+        autorange_after_scroll: true,
+        automatic: true,
+      },
+      {
+        name: "card scroll autorange ignores invalid partial bounds",
+        min_y_axis: 2000,
+        max_y_axis: undefined,
+        autorange_after_scroll: true,
+        automatic: true,
+      },
+      {
+        name: "card scroll autorange retains linear fit bounds",
+        fit_y_data: true,
+        autorange_after_scroll: true,
+        includes: [300, 600, 1000, 1500],
+      },
+      {
+        name: "card scroll autorange retains logarithmic fit bounds",
+        logarithmic_scale: true,
+        fit_y_data: true,
+        autorange_after_scroll: true,
+        includes: [300, 600, 1000, 1500],
+      },
+      {
+        name: "card invalid partial bound falls back to autorange",
+        min_y_axis: 2000,
+        max_y_axis: undefined,
+        automatic: true,
+      },
+    ];
+    for (const test of cases) {
+      const { name, expected, includes, automatic, ...options } = test;
+      const now = Date.now();
+      await card.setConfig({
+        type: "custom:plotly-graph",
+        refresh_interval: 0,
+        min_y_axis: 300,
+        max_y_axis: 1500,
+        ...options,
+        entities: [{ entity: "", x: [now - 60000, now], y: [600, 1000] }],
+      });
+      await card.plot({ should_fetch: false });
+      if (card.errorMsgEl.textContent)
+        throw new Error(`${name}: ${card.errorMsgEl.textContent}`);
+      const axis = card.contentEl._fullLayout.yaxis;
+      if (!(axis.range[0] < axis.range[1]))
+        throw new Error(`${name}: reversed range`);
+      if (
+        expected &&
+        expected.some(
+          (value, index) => Math.abs(value - axis.range[index]) > 1e-10,
+        )
+      )
+        throw new Error(`${name}: wrong range`);
+      if (automatic && axis.autorange !== true)
+        throw new Error(`${name}: not automatic`);
+      if (automatic && (axis.range[0] === 300 || axis.range[1] === 1500))
+        throw new Error(`${name}: fixed editor bounds still applied`);
+      for (const value of includes || []) {
+        const coordinate = axis.type === "log" ? Math.log10(value) : value;
+        if (
+          coordinate < axis.range[0] - 1e-10 ||
+          coordinate > axis.range[1] + 1e-10
+        )
+          throw new Error(`${name}: ${value} is outside the fitted range`);
+      }
+    }
+    return cases.map(({ name }) => name);
+  });
+  results.results.push(...editorCardCases);
+  const automaticCardCases = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    const cases = [
+      { values: ["off", "on"], type: "category" },
+      { values: ["2026-10-01", "2026-10-02"], type: "date" },
+    ];
+    for (const test of cases) {
+      const now = Date.now();
+      const config = {
+        type: "custom:plotly-graph",
+        refresh_interval: 0,
+        entities: [{ entity: "", x: [now - 60000, now], y: [10, 100] }],
+      };
+      await card.setConfig({ ...config, logarithmic_scale: true });
+      await card.plot({ should_fetch: false });
+      await card.setConfig({
+        ...config,
+        logarithmic_scale: false,
+        entities: [{ entity: "", x: [now - 60000, now], y: test.values }],
+      });
+      await card.plot({ should_fetch: false });
+      if (card.errorMsgEl.textContent)
+        throw new Error(card.errorMsgEl.textContent);
+      if (card.contentEl._fullLayout.yaxis.type !== test.type)
+        throw new Error(
+          `card disabled log toggle: expected ${test.type}, got ${card.contentEl._fullLayout.yaxis.type}`,
+        );
+    }
+    return cases.map(
+      ({ type }) => `card disabled log toggle restores ${type} auto-detection`,
+    );
+  });
+  results.results.push(...automaticCardCases);
+  const themeColors = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    document.documentElement.style.setProperty("--accent-color", "#123456");
+    card.style.setProperty("--error-color", "#654321");
+    const config = {
+      type: "custom:plotly-graph",
+      refresh_interval: 0,
+      entities: [
+        {
+          entity: "",
+          x: [1, 2],
+          y: [1, 2],
+          line: { color: "$ex css_vars['accent-color']" },
+        },
+        {
+          entity: "",
+          x: [1, 2],
+          y: [2, 3],
+          line: { color: "$fn ({ css_vars }) => css_vars['error-color']" },
+        },
+      ],
+    };
+    await card.setConfig(config);
+    await card.plot({ should_fetch: false });
+    const initial = card.contentEl._fullData.map((trace) => trace.line.color);
+    document.documentElement.style.setProperty("--accent-color", "#abcdef");
+    card.style.setProperty("--error-color", "#fedcba");
+    await card.plot({ should_fetch: false });
+    const changed = card.contentEl._fullData.map((trace) => trace.line.color);
+    await card.setConfig({ ...config, ha_theme: false });
+    await card.plot({ should_fetch: false });
+    const noTheme = card.contentEl._fullData.map((trace) => trace.line.color);
+    document.documentElement.style.removeProperty("--accent-color");
+    card.style.removeProperty("--error-color");
+    return { initial, changed, noTheme, error: card.errorMsgEl.textContent };
+  });
+  assert.equal(themeColors.error, "");
+  assert.deepEqual(themeColors.initial, ["#123456", "#654321"]);
+  assert.deepEqual(themeColors.changed, ["#abcdef", "#fedcba"]);
+  assert.deepEqual(themeColors.noTheme, ["#abcdef", "#fedcba"]);
+  results.results.push(
+    "theme colors resolve through $ex/$fn and update on render",
+  );
+  results.results.push("theme colors remain available with ha_theme disabled");
+  const retention = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    const entity = "sensor.retention";
+    window.cacheNow = Math.floor(Date.now() / 1000) * 1000 - 120000;
+    card.hass = {
+      ...card.hass,
+      states: {
+        [entity]: {
+          entity_id: entity,
+          state: "1",
+          attributes: {},
+          last_updated: new Date(window.cacheNow).toISOString(),
+          last_changed: new Date(window.cacheNow).toISOString(),
+        },
+      },
+      callWS: async (request) => {
+        if (request.type !== "history/history_during_period")
+          throw new Error("Unexpected request");
+        const start = Date.parse(request.start_time);
+        const end = Date.parse(request.end_time);
+        const timestamps = [start];
+        for (let t = Math.ceil(start / 1000) * 1000; t <= end; t += 1000)
+          timestamps.push(t);
+        return {
+          [entity]: timestamps.map((timestamp) => ({
+            entity_id: entity,
+            state: String(timestamp),
+            attributes: {},
+            last_updated: new Date(timestamp).toISOString(),
+            last_changed: new Date(timestamp).toISOString(),
+          })),
+        };
+      },
+    };
+    await card.setConfig({
+      type: "custom:plotly-graph",
+      refresh_interval: 0,
+      visible_range: "$fn () => [window.cacheNow - 60000, window.cacheNow]",
+      entities: [{ entity, extend_to_present: false }],
+    });
+    let maxPoints = 0;
+    for (let i = 0; i < 20; i++) {
+      window.cacheNow += 1000;
+      await card.plot({ should_fetch: true });
+      if (card.errorMsgEl.textContent)
+        throw new Error(card.errorMsgEl.textContent);
+      const trace = card.contentEl.data[0];
+      maxPoints = Math.max(maxPoints, trace.x.length);
+      if (+new Date(trace.x[0]) !== window.cacheNow - 60000)
+        throw new Error("Plotted range did not advance");
+      if (trace.y.at(-1) !== String(window.cacheNow))
+        throw new Error("Latest sample missing");
+    }
+    return { maxPoints, plottedPoints: card.contentEl.data[0].y.length };
+  });
+  assert.equal(retention.maxPoints, 61);
+  assert.equal(retention.plottedPoints, 61);
+  results.results.push(
+    "rolling dynamic range keeps 61 samples across 20 card refreshes",
+  );
+  const modernCardResults = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    const rendered = [];
+    for (const { type, data } of window.modernTraceCases) {
+      await card.setConfig({
+        type: "custom:plotly-graph",
+        raw_plotly_config: true,
+        refresh_interval: 0,
+        layout: {},
+        entities: [{ entity: "", ...data, type }],
+      });
+      try {
+        await card.plot({ should_fetch: true });
+      } catch (error) {
+        throw new Error(`${type}: ${error.message}`);
+      }
+      if (card.errorMsgEl.textContent)
+        throw new Error(card.errorMsgEl.textContent);
+      if (
+        card.contentEl._fullData[0].type !== type ||
+        card.contentEl._fullData[0].visible === false
+      ) {
+        throw new Error(`${type}: card did not render the requested trace`);
+      }
+      rendered.push(`Lovelace card: ${type}`);
+    }
+    return rendered;
+  });
+  results.results.push(...modernCardResults);
+  await page.evaluate(() => {
+    const card = document.getElementById("card-under-test");
+    const end = Date.now() - 60000;
+    const start = end - 3600000;
+    const ids = ["sensor.east", "sensor.west", "sensor.north", "sensor.south"];
+    window.statisticsRequests = [];
+    card.hass = {
+      ...card.hass,
+      callWS: async (request) => {
+        if (request.type !== "recorder/statistics_during_period")
+          throw new Error("Unexpected request");
+        window.statisticsRequests.push(request);
+        return Object.fromEntries(
+          request.statistic_ids.map((id, index) => [
+            id,
+            [
+              { start, end: start + 300000, mean: index + 1 },
+              { start: start + 300000, end: start + 600000, mean: index + 2 },
+            ],
+          ]),
+        );
+      },
+    };
+    card.setConfig({
+      type: "custom:plotly-graph",
+      refresh_interval: 0,
+      visible_range: [start, end],
+      entities: ids.map((entity) => ({
+        entity,
+        statistic: "mean",
+        period: "5minute",
+      })),
+    });
+  });
+  await page.waitForFunction(
+    () =>
+      document.getElementById("card-under-test").contentEl?._fullData
+        ?.length === 4,
+  );
+  const statisticsState = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    await card.plot({ should_fetch: true });
+    return {
+      requests: window.statisticsRequests,
+      error: card.errorMsgEl.textContent,
+      values: card.contentEl.data.map((trace) => trace.y),
+    };
+  });
+  assert.equal(statisticsState.error, "");
+  assert.equal(statisticsState.requests.length, 1);
+  assert.deepEqual(statisticsState.requests[0].statistic_ids, [
+    "sensor.east",
+    "sensor.west",
+    "sensor.north",
+    "sensor.south",
+  ]);
+  assert.equal(statisticsState.requests[0].period, "5minute");
+  assert.deepEqual(statisticsState.values, [
+    [1, 2],
+    [2, 3],
+    [3, 4],
+    [4, 5],
+  ]);
+  results.results.push(
+    "four statistics traces render from one request and reuse the cache",
+  );
+  await page.evaluate(() => {
+    const card = document.getElementById("card-under-test");
+    const end = Date.now() - 60000;
+    const start = end - 3600000;
+    const entityIds = [
+      "sensor.one",
+      "sensor.two",
+      "sensor.three",
+      "sensor.four",
+    ];
+    window.historyRequests = [];
+    card.hass = {
+      ...card.hass,
+      states: Object.fromEntries(
+        entityIds.map((entity_id) => [
+          entity_id,
+          {
+            entity_id,
+            state: "2",
+            attributes: { unit_of_measurement: "W" },
+            last_changed: new Date(end).toISOString(),
+            last_updated: new Date(end).toISOString(),
+          },
+        ]),
+      ),
+      callApi: () => {
+        throw new Error("History must not use REST");
+      },
+      callWS: async (request) => {
+        if (request.type !== "history/history_during_period")
+          throw new Error("Unexpected request");
+        window.historyRequests.push(request);
+        return Object.fromEntries(
+          request.entity_ids.map((id, index) => [
+            id,
+            [
+              { s: String(index + 1), lu: start / 1000 },
+              { s: String(index + 2), lu: end / 1000 },
+            ],
+          ]),
+        );
+      },
+    };
+    card.setConfig({
+      type: "custom:plotly-graph",
+      refresh_interval: 0,
+      visible_range: [start, end],
+      entities: entityIds.map((entity) => ({
+        entity,
+        extend_to_present: false,
+      })),
+    });
+  });
+  await page.waitForFunction(() => {
+    const card = document.getElementById("card-under-test");
+    return card.contentEl?._fullData?.length === 4;
+  });
+  const historyState = await page.evaluate(async () => {
+    const card = document.getElementById("card-under-test");
+    await card.plot({ should_fetch: true });
+    return {
+      requests: window.historyRequests,
+      values: card.contentEl.data.map((trace) => trace.y),
+      error: card.errorMsgEl.textContent,
+    };
+  });
+  assert.equal(historyState.error, "");
+  assert.equal(historyState.requests.length, 1);
+  assert.deepEqual(historyState.requests[0].entity_ids, [
+    "sensor.one",
+    "sensor.two",
+    "sensor.three",
+    "sensor.four",
+  ]);
+  assert.deepEqual(historyState.values, [
+    ["1", "2"],
+    ["2", "3"],
+    ["3", "4"],
+    ["4", "5"],
+  ]);
+  results.results.push(
+    "four history traces render from one WebSocket request and reuse the cache",
+  );
+  assert.deepEqual(errors, []);
+  console.log(
+    `Plotly ${results.version}: ${results.results.length} browser checks passed`,
+  );
+  console.log(results.results.join(", "));
+} finally {
+  await browser?.close();
+  await new Promise((resolve) => server.close(resolve));
+}
